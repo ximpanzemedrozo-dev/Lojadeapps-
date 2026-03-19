@@ -25,6 +25,7 @@ export const AdminPanel: React.FC = () => {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [githubRepo, setGithubRepo] = useState(localStorage.getItem('github_repo') || '');
   const [isUploadingGithub, setIsUploadingGithub] = useState<string | null>(null);
+  const [isUploadingNewAppGithub, setIsUploadingNewAppGithub] = useState(false);
   const [isIframe, setIsIframe] = useState(false);
 
   useEffect(() => {
@@ -213,15 +214,94 @@ export const AdminPanel: React.FC = () => {
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  const handleGithubUpload = async (app: AppData) => {
+  const uploadToGithub = async (file: File, appName: string): Promise<string> => {
     const pat = process.env.GITHUB_PAT;
-    if (!pat) {
-      alert("GITHUB_PAT não configurado nos Secrets!");
-      return;
+    if (!pat) throw new Error("GITHUB_PAT não configurado nos Secrets!");
+    
+    // Extract owner/repo from full URL if provided
+    let repoPath = githubRepo.trim();
+    if (repoPath.includes('github.com/')) {
+      repoPath = repoPath.split('github.com/')[1].split('?')[0].split('#')[0];
+      // Remove trailing slash if exists
+      if (repoPath.endsWith('/')) repoPath = repoPath.slice(0, -1);
     }
 
-    if (!githubRepo || !githubRepo.includes('/')) {
-      alert("Configure o repositório no formato 'usuario/repositorio'");
+    if (!repoPath || !repoPath.includes('/')) throw new Error("Configure o repositório no formato 'usuario/repositorio' ou cole a URL completa.");
+
+    const version = window.prompt("Digite a versão (ex: v1.0.0):", "v1.0.0");
+    if (!version) throw new Error("Operação cancelada.");
+
+    // 1. Create Release
+    const releaseResponse = await fetch(`https://api.github.com/repos/${repoPath}/releases`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `token ${pat}`,
+        'Accept': 'application/vnd.github.v3+json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        tag_name: version,
+        name: `Release ${version} - ${appName}`,
+        body: `Upload automático via Painel Admin.`,
+        draft: false,
+        prerelease: false
+      })
+    });
+
+    if (!releaseResponse.ok) {
+      const errorData = await releaseResponse.json();
+      throw new Error(`Erro GitHub (Release): ${errorData.message || releaseResponse.statusText}`);
+    }
+    const releaseData = await releaseResponse.json();
+
+    // 2. Upload Asset
+    const uploadUrl = releaseData.upload_url.replace('{?name,label}', `?name=${encodeURIComponent(file.name)}`);
+    const uploadResponse = await fetch(uploadUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `token ${pat}`,
+        'Content-Type': 'application/octet-stream',
+      },
+      body: file
+    });
+
+    if (!uploadResponse.ok) {
+      const errorData = await uploadResponse.json();
+      throw new Error(`Erro GitHub (Upload): ${errorData.message || uploadResponse.statusText}`);
+    }
+    const assetData = await uploadResponse.json();
+
+    return assetData.browser_download_url;
+  };
+
+  const handleGithubUpload = async (app: AppData) => {
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.accept = '.apk';
+    
+    fileInput.onchange = async (e: any) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      setIsUploadingGithub(app.id);
+      try {
+        const downloadUrl = await uploadToGithub(file, app.nome);
+        await updateDoc(doc(db, 'apps', app.id), { downloadUrl });
+        alert(`Sucesso! App atualizado com o link do GitHub: ${downloadUrl}`);
+      } catch (error: any) {
+        console.error(error);
+        alert(error.message || "Erro no processo do GitHub.");
+      } finally {
+        setIsUploadingGithub(null);
+      }
+    };
+
+    fileInput.click();
+  };
+
+  const handleNewAppGithubUpload = async () => {
+    if (!newApp.nome) {
+      alert("Digite o nome do aplicativo primeiro!");
       return;
     }
 
@@ -233,55 +313,16 @@ export const AdminPanel: React.FC = () => {
       const file = e.target.files?.[0];
       if (!file) return;
 
-      const version = window.prompt("Digite a versão (ex: v1.0.0):", "v1.0.0");
-      if (!version) return;
-
-      setIsUploadingGithub(app.id);
+      setIsUploadingNewAppGithub(true);
       try {
-        // 1. Create Release
-        const releaseResponse = await fetch(`https://api.github.com/repos/${githubRepo}/releases`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `token ${pat}`,
-            'Accept': 'application/vnd.github.v3+json',
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            tag_name: version,
-            name: `Release ${version} - ${app.nome}`,
-            body: `Upload automático via Painel Admin.`,
-            draft: false,
-            prerelease: false
-          })
-        });
-
-        if (!releaseResponse.ok) throw new Error("Erro ao criar release no GitHub");
-        const releaseData = await releaseResponse.json();
-
-        // 2. Upload Asset
-        const uploadUrl = releaseData.upload_url.replace('{?name,label}', `?name=${file.name}`);
-        const uploadResponse = await fetch(uploadUrl, {
-          method: 'POST',
-          headers: {
-            'Authorization': `token ${pat}`,
-            'Content-Type': 'application/octet-stream',
-          },
-          body: file
-        });
-
-        if (!uploadResponse.ok) throw new Error("Erro ao subir arquivo para o GitHub");
-        const assetData = await uploadResponse.json();
-
-        // 3. Update App Download URL in Firestore
-        const downloadUrl = assetData.browser_download_url;
-        await updateDoc(doc(db, 'apps', app.id), { downloadUrl });
-        
-        alert(`Sucesso! App atualizado com o link do GitHub: ${downloadUrl}`);
-      } catch (error) {
+        const downloadUrl = await uploadToGithub(file, newApp.nome);
+        setNewApp({ ...newApp, downloadUrl });
+        alert(`APK enviado com sucesso! O link foi preenchido.`);
+      } catch (error: any) {
         console.error(error);
-        alert("Erro no processo do GitHub. Verifique o console e o Token.");
+        alert(error.message || "Erro no processo do GitHub.");
       } finally {
-        setIsUploadingGithub(null);
+        setIsUploadingNewAppGithub(false);
       }
     };
 
@@ -405,14 +446,32 @@ export const AdminPanel: React.FC = () => {
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-gray-500 uppercase">Link de Download</label>
+                  <label className="text-xs font-bold text-gray-500 uppercase flex items-center justify-between">
+                    <span>Link para Download</span>
+                    <span className="text-[10px] text-gray-400">Ou use o botão abaixo</span>
+                  </label>
                   <input
                     type="text"
                     value={newApp.downloadUrl}
                     onChange={(e) => setNewApp({ ...newApp, downloadUrl: e.target.value })}
                     className="w-full bg-[#374151] border border-gray-600 rounded-xl p-3 focus:ring-2 focus:ring-[#facc15] outline-none transition-all"
-                    placeholder="Link do Mediafire/GitHub"
+                    placeholder="Link para Mediafire/GitHub"
                   />
+                  <div className="mt-2">
+                    <button
+                      onClick={handleNewAppGithubUpload}
+                      disabled={isUploadingNewAppGithub}
+                      className={`w-full flex items-center justify-center gap-2 bg-[#374151] hover:bg-[#4b5563] border border-dashed border-gray-500 rounded-xl p-3 transition-all text-sm font-bold ${isUploadingNewAppGithub ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      {isUploadingNewAppGithub ? (
+                        <div className="flex items-center gap-2 animate-pulse text-[#facc15]">
+                          <Github className="animate-spin" size={18} /> SUBINDO APK...
+                        </div>
+                      ) : (
+                        <><Github size={18} /> SUBIR APK PARA GITHUB RELEASES</>
+                      )}
+                    </button>
+                  </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
