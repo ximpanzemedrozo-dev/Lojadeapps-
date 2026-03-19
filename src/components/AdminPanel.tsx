@@ -216,7 +216,7 @@ export const AdminPanel: React.FC = () => {
 
   const uploadToGithub = async (file: File, appName: string): Promise<string> => {
     const pat = process.env.GITHUB_PAT;
-    if (!pat) throw new Error("GITHUB_PAT não configurado nos Secrets!");
+    if (!pat) throw new Error("GITHUB_PAT não configurado nos Secrets! Por favor, adicione GITHUB_PAT nas configurações (ícone de engrenagem > Secrets).");
     
     // Extract owner/repo from full URL if provided
     let repoPath = githubRepo.trim();
@@ -231,35 +231,63 @@ export const AdminPanel: React.FC = () => {
     const version = window.prompt("Digite a versão (ex: v1.0.0):", "v1.0.0");
     if (!version) throw new Error("Operação cancelada.");
 
-    // 1. Create Release
-    const releaseResponse = await fetch(`https://api.github.com/repos/${repoPath}/releases`, {
-      method: 'POST',
+    // 1. Check if release already exists
+    let releaseData;
+    const checkReleaseResponse = await fetch(`https://api.github.com/repos/${repoPath}/releases/tags/${version}`, {
       headers: {
-        'Authorization': `token ${pat}`,
+        'Authorization': `Bearer ${pat}`,
         'Accept': 'application/vnd.github.v3+json',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        tag_name: version,
-        name: `Release ${version} - ${appName}`,
-        body: `Upload automático via Painel Admin.`,
-        draft: false,
-        prerelease: false
-      })
+      }
     });
 
-    if (!releaseResponse.ok) {
-      const errorData = await releaseResponse.json();
-      throw new Error(`Erro GitHub (Release): ${errorData.message || releaseResponse.statusText}`);
+    if (checkReleaseResponse.ok) {
+      releaseData = await checkReleaseResponse.json();
+      
+      // Check if asset already exists and delete it if so
+      const existingAsset = releaseData.assets.find((a: any) => a.name === file.name);
+      if (existingAsset) {
+        const deleteResponse = await fetch(existingAsset.url, {
+          method: 'DELETE',
+          headers: {
+            'Authorization': `Bearer ${pat}`,
+            'Accept': 'application/vnd.github.v3+json',
+          }
+        });
+        if (!deleteResponse.ok) {
+          console.warn("Could not delete existing asset, upload might fail.");
+        }
+      }
+    } else {
+      // Create new release
+      const releaseResponse = await fetch(`https://api.github.com/repos/${repoPath}/releases`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${pat}`,
+          'Accept': 'application/vnd.github.v3+json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          tag_name: version,
+          name: `Release ${version} - ${appName}`,
+          body: `Upload automático via Painel Admin.`,
+          draft: false,
+          prerelease: false
+        })
+      });
+
+      if (!releaseResponse.ok) {
+        const errorData = await releaseResponse.json();
+        throw new Error(`Erro GitHub (Release): ${errorData.message || releaseResponse.statusText}. Verifique se o repositório existe e se o token tem permissão 'repo'.`);
+      }
+      releaseData = await releaseResponse.json();
     }
-    const releaseData = await releaseResponse.json();
 
     // 2. Upload Asset
     const uploadUrl = releaseData.upload_url.replace('{?name,label}', `?name=${encodeURIComponent(file.name)}`);
     const uploadResponse = await fetch(uploadUrl, {
       method: 'POST',
       headers: {
-        'Authorization': `token ${pat}`,
+        'Authorization': `Bearer ${pat}`,
         'Content-Type': 'application/octet-stream',
       },
       body: file
@@ -407,9 +435,16 @@ export const AdminPanel: React.FC = () => {
 
         {/* GitHub Config Section */}
         <div className="mb-8 bg-[#1f2937] rounded-2xl p-6 border border-gray-700 shadow-xl">
-          <div className="flex items-center gap-3 mb-4 text-[#facc15]">
-            <Github size={24} />
-            <h2 className="text-xl font-bold uppercase">Configuração GitHub</h2>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3 text-[#facc15]">
+              <Github size={24} />
+              <h2 className="text-xl font-bold uppercase">Configuração GitHub</h2>
+            </div>
+            {process.env.GITHUB_PAT ? (
+              <span className="text-[10px] bg-green-500/20 text-green-400 px-2 py-1 rounded-full border border-green-500/30 font-bold">TOKEN OK</span>
+            ) : (
+              <span className="text-[10px] bg-red-500/20 text-red-400 px-2 py-1 rounded-full border border-red-500/30 font-bold">TOKEN AUSENTE</span>
+            )}
           </div>
           <div className="space-y-4">
             <div className="space-y-1">
@@ -423,7 +458,10 @@ export const AdminPanel: React.FC = () => {
               />
             </div>
             <p className="text-[10px] text-gray-400 italic">
-              * O Token (PAT) deve ser configurado nos Secrets do AI Studio como GITHUB_PAT.
+              * O Token (PAT) deve ser configurado nos Secrets do AI Studio como <strong>GITHUB_PAT</strong>.
+              {!process.env.GITHUB_PAT && (
+                <span className="block mt-1 text-red-400 font-bold">Atenção: GITHUB_PAT não encontrado! Adicione-o nos Secrets para habilitar o upload.</span>
+              )}
             </p>
           </div>
         </div>
