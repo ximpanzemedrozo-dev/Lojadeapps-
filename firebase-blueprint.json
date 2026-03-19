@@ -1,0 +1,41 @@
+{
+  "entities": {
+    "stores": {
+      "title": "Store",
+      "description": "A customized app store.",
+      "type": "object",
+      "properties": {
+        "nome": { "type": "string" },
+        "logoUrl": { "type": "string" },
+        "slug": { "type": "string" },
+        "excludedAppIds": { "type": "array", "items": { "type": "string" } },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["nome", "slug"]
+    },
+    "apps": {
+      "title": "Application",
+      "description": "An application available for download.",
+      "type": "object",
+      "properties": {
+        "nome": { "type": "string" },
+        "downloadUrl": { "type": "string" },
+        "pin": { "type": "string" },
+        "iconUrl": { "type": "string" },
+        "tamanho": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["nome", "downloadUrl"]
+    }
+  },
+  "firestore": {
+    "stores": {
+      "schema": "stores",
+      "description": "Collection of customized app stores."
+    },
+    "apps": {
+      "schema": "apps",
+      "description": "Collection of available applications."
+    }
+  }
+}

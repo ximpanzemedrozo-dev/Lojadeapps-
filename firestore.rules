@@ -1,0 +1,43 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && 
+        (request.auth.token.email == "ximpanzemedrozo@gmail.com" && request.auth.token.email_verified == true);
+    }
+
+    function isValidApp(data) {
+      return data.nome is string && data.nome.size() > 0 && data.nome.size() < 100 &&
+             data.downloadUrl is string && data.downloadUrl.size() > 0 &&
+             (data.iconUrl == null || (data.iconUrl is string && data.iconUrl.size() < 500)) &&
+             (data.pin == null || (data.pin is string && data.pin.size() < 20)) &&
+             (data.tamanho == null || (data.tamanho is string && data.tamanho.size() < 20));
+    }
+
+    function isValidStore(data) {
+      return data.nome is string && data.nome.size() > 0 && data.nome.size() < 100 &&
+             data.slug is string && data.slug.size() > 0 && data.slug.size() < 50 &&
+             (data.logoUrl == null || (data.logoUrl is string && data.logoUrl.size() < 500)) &&
+             (data.excludedAppIds == null || data.excludedAppIds is list);
+    }
+
+    match /stores/{storeId} {
+      allow read: if true;
+      allow create: if isAdmin() && isValidStore(request.resource.data);
+      allow update: if isAdmin() && isValidStore(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /apps/{appId} {
+      allow read: if true; // Publicly readable
+      allow create: if isAdmin() && isValidApp(request.resource.data);
+      allow update: if isAdmin() && isValidApp(request.resource.data);
+      allow delete: if isAdmin();
+    }
+  }
+}
