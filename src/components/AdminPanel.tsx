@@ -27,6 +27,10 @@ export const AdminPanel: React.FC = () => {
   const [isUploadingGithub, setIsUploadingGithub] = useState<string | null>(null);
   const [isUploadingNewAppGithub, setIsUploadingNewAppGithub] = useState(false);
   const [isIframe, setIsIframe] = useState(false);
+  const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
+  const [confirmModal, setConfirmModal] = useState<{ message: string, onConfirm: () => void } | null>(null);
+  const [versionModal, setVersionModal] = useState<{ appName: string, onConfirm: (version: string) => void } | null>(null);
+  const [tempVersion, setTempVersion] = useState('v1.0.0');
 
   useEffect(() => {
     setIsIframe(window.self !== window.top);
@@ -94,9 +98,14 @@ export const AdminPanel: React.FC = () => {
     return () => unsubscribeAuth();
   }, []);
 
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3000);
+  };
+
   const handleAddStore = async () => {
     if (!newStore.nome || !newStore.slug) {
-      alert("Preencha Nome e Slug!");
+      showToast("Preencha Nome e Slug!", 'error');
       return;
     }
 
@@ -110,7 +119,7 @@ export const AdminPanel: React.FC = () => {
       // Reset file input
       const fileInput = document.getElementById('store-logo-upload') as HTMLInputElement;
       if (fileInput) fileInput.value = '';
-      alert("Sub-Loja Criada!");
+      showToast("Sub-Loja Criada!");
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, 'stores');
     }
@@ -118,7 +127,7 @@ export const AdminPanel: React.FC = () => {
 
   const handleAddApp = async () => {
     if (!newApp.nome || !newApp.downloadUrl) {
-      alert("Preencha Nome e Link!");
+      showToast("Preencha Nome e Link!", 'error');
       return;
     }
 
@@ -131,7 +140,7 @@ export const AdminPanel: React.FC = () => {
       // Reset file input
       const fileInput = document.getElementById('app-icon-upload') as HTMLInputElement;
       if (fileInput) fileInput.value = '';
-      alert("App Criado!");
+      showToast("App Criado!");
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, 'apps');
     }
@@ -142,7 +151,7 @@ export const AdminPanel: React.FC = () => {
     if (!file) return;
 
     if (file.size > 800000) { // ~800KB limit for Firestore safety
-      alert("Imagem muito grande! Use uma imagem menor que 800KB.");
+      showToast("Imagem muito grande! Use uma imagem menor que 800KB.", 'error');
       e.target.value = '';
       return;
     }
@@ -156,7 +165,7 @@ export const AdminPanel: React.FC = () => {
       }
     } catch (error) {
       console.error("Error converting file:", error);
-      alert("Erro ao processar imagem.");
+      showToast("Erro ao processar imagem.", 'error');
     }
   };
 
@@ -181,30 +190,40 @@ export const AdminPanel: React.FC = () => {
   const handleUpdateAppLink = async (id: string, newUrl: string) => {
     try {
       await updateDoc(doc(db, 'apps', id), { downloadUrl: newUrl });
-      alert("Link atualizado!");
+      showToast("Link atualizado!");
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `apps/${id}`);
     }
   };
 
   const handleDeleteApp = async (id: string) => {
-    if (window.confirm("Deseja realmente apagar este aplicativo de TODAS as lojas?")) {
-      try {
-        await deleteDoc(doc(db, 'apps', id));
-      } catch (error) {
-        handleFirestoreError(error, OperationType.DELETE, `apps/${id}`);
+    setConfirmModal({
+      message: "Deseja realmente apagar este aplicativo de TODAS as lojas?",
+      onConfirm: async () => {
+        try {
+          await deleteDoc(doc(db, 'apps', id));
+          showToast("App excluído com sucesso!");
+        } catch (error) {
+          handleFirestoreError(error, OperationType.DELETE, `apps/${id}`);
+        }
+        setConfirmModal(null);
       }
-    }
+    });
   };
 
   const handleDeleteStore = async (id: string) => {
-    if (window.confirm("Deseja apagar esta sub-loja?")) {
-      try {
-        await deleteDoc(doc(db, 'stores', id));
-      } catch (error) {
-        handleFirestoreError(error, OperationType.DELETE, `stores/${id}`);
+    setConfirmModal({
+      message: "Deseja apagar esta sub-loja?",
+      onConfirm: async () => {
+        try {
+          await deleteDoc(doc(db, 'stores', id));
+          showToast("Loja excluída com sucesso!");
+        } catch (error) {
+          handleFirestoreError(error, OperationType.DELETE, `stores/${id}`);
+        }
+        setConfirmModal(null);
       }
-    }
+    });
   };
 
   const copyStoreLink = (slug: string, id: string) => {
@@ -214,7 +233,7 @@ export const AdminPanel: React.FC = () => {
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  const uploadToGithub = async (file: File, appName: string): Promise<string> => {
+  const uploadToGithub = async (file: File, appName: string, version: string): Promise<string> => {
     const pat = process.env.GITHUB_PAT;
     if (!pat) throw new Error("GITHUB_PAT não configurado nos Secrets! Por favor, adicione GITHUB_PAT nas configurações (ícone de engrenagem > Secrets).");
     
@@ -227,9 +246,6 @@ export const AdminPanel: React.FC = () => {
     }
 
     if (!repoPath || !repoPath.includes('/')) throw new Error("Configure o repositório no formato 'usuario/repositorio' ou cole a URL completa.");
-
-    const version = window.prompt("Digite a versão (ex: v1.0.0):", "v1.0.0");
-    if (!version) throw new Error("Operação cancelada.");
 
     // 1. Check if release already exists
     let releaseData;
@@ -311,17 +327,23 @@ export const AdminPanel: React.FC = () => {
       const file = e.target.files?.[0];
       if (!file) return;
 
-      setIsUploadingGithub(app.id);
-      try {
-        const downloadUrl = await uploadToGithub(file, app.nome);
-        await updateDoc(doc(db, 'apps', app.id), { downloadUrl });
-        alert(`Sucesso! App atualizado com o link do GitHub: ${downloadUrl}`);
-      } catch (error: any) {
-        console.error(error);
-        alert(error.message || "Erro no processo do GitHub.");
-      } finally {
-        setIsUploadingGithub(null);
-      }
+      setVersionModal({
+        appName: app.nome,
+        onConfirm: async (version) => {
+          setVersionModal(null);
+          setIsUploadingGithub(app.id);
+          try {
+            const downloadUrl = await uploadToGithub(file, app.nome, version);
+            await updateDoc(doc(db, 'apps', app.id), { downloadUrl });
+            showToast(`Sucesso! App atualizado com o link do GitHub.`);
+          } catch (error: any) {
+            console.error(error);
+            showToast(error.message || "Erro no processo do GitHub.", 'error');
+          } finally {
+            setIsUploadingGithub(null);
+          }
+        }
+      });
     };
 
     fileInput.click();
@@ -329,7 +351,7 @@ export const AdminPanel: React.FC = () => {
 
   const handleNewAppGithubUpload = async () => {
     if (!newApp.nome) {
-      alert("Digite o nome do aplicativo primeiro!");
+      showToast("Digite o nome do aplicativo primeiro!", 'error');
       return;
     }
 
@@ -341,17 +363,23 @@ export const AdminPanel: React.FC = () => {
       const file = e.target.files?.[0];
       if (!file) return;
 
-      setIsUploadingNewAppGithub(true);
-      try {
-        const downloadUrl = await uploadToGithub(file, newApp.nome);
-        setNewApp({ ...newApp, downloadUrl });
-        alert(`APK enviado com sucesso! O link foi preenchido.`);
-      } catch (error: any) {
-        console.error(error);
-        alert(error.message || "Erro no processo do GitHub.");
-      } finally {
-        setIsUploadingNewAppGithub(false);
-      }
+      setVersionModal({
+        appName: newApp.nome,
+        onConfirm: async (version) => {
+          setVersionModal(null);
+          setIsUploadingNewAppGithub(true);
+          try {
+            const downloadUrl = await uploadToGithub(file, newApp.nome, version);
+            setNewApp({ ...newApp, downloadUrl });
+            showToast(`APK enviado com sucesso! O link foi preenchido.`);
+          } catch (error: any) {
+            console.error(error);
+            showToast(error.message || "Erro no processo do GitHub.", 'error');
+          } finally {
+            setIsUploadingNewAppGithub(false);
+          }
+        }
+      });
     };
 
     fileInput.click();
@@ -366,13 +394,13 @@ export const AdminPanel: React.FC = () => {
           className="bg-[#2d2d2d] p-10 rounded-3xl shadow-2xl text-center max-w-md w-full border border-gray-700"
         >
           <ShieldAlert size={64} className="text-[#facc15] mx-auto mb-6" />
-          <h1 className="text-3xl font-bold text-[#facc15] mb-2 uppercase tracking-tight">PAINEL PRIVADO</h1>
-          <p className="text-gray-400 mb-8">Acesso restrito aos administradores da Loja de Apps.</p>
+          <h1 className="text-3xl font-bold text-[#facc15] mb-2 uppercase tracking-tight"><span>PAINEL PRIVADO</span></h1>
+          <p className="text-gray-400 mb-8"><span>Acesso restrito aos administradores da Loja de Apps.</span></p>
           
           <div className="mb-6 p-4 bg-blue-900/30 border border-blue-700/50 rounded-xl text-sm text-blue-200 text-left">
-            <strong>Dica:</strong> Se o botão de login não abrir nada, clique no botão abaixo para abrir em uma nova aba. O navegador costuma bloquear logins dentro desta janela de visualização.
+            <strong><span>Dica:</span></strong> <span>Se o botão de login não abrir nada, clique no botão abaixo para abrir em uma nova aba. O navegador costuma bloquear logins dentro desta janela de visualização.</span>
             <br /><br />
-            <strong>Atenção:</strong> Certifique-se de que o domínio <code>run.app</code> está adicionado nos <strong>"Domínios Autorizados"</strong> no Console do Firebase (Autenticação {'>'} Configurações).
+            <strong><span>Atenção:</span></strong> <span>Certifique-se de que o domínio </span><code>run.app</code><span> está adicionado nos </span><strong><span>"Domínios Autorizados"</span></strong><span> no Console do Firebase (Autenticação {'>'} Configurações).</span>
           </div>
 
           {isIframe && (
@@ -381,7 +409,7 @@ export const AdminPanel: React.FC = () => {
               className="w-full mb-4 bg-gray-700 hover:bg-gray-600 text-white py-3 rounded-xl font-semibold flex items-center justify-center gap-2 transition-all"
             >
               <ExternalLink size={18} />
-              ABRIR EM NOVA ABA
+              <span>ABRIR EM NOVA ABA</span>
             </button>
           )}
 
@@ -391,13 +419,13 @@ export const AdminPanel: React.FC = () => {
                 await loginWithGoogle();
               } catch (error: any) {
                 console.error("Erro no login:", error);
-                alert("Erro ao fazer login: " + (error.message || "Verifique se os popups estão bloqueados."));
+                showToast("Erro ao fazer login: " + (error.message || "Verifique se os popups estão bloqueados."), 'error');
               }
             }}
             className="w-full bg-[#db4437] hover:bg-[#c53929] text-white py-4 rounded-xl font-bold text-lg transition-all flex items-center justify-center gap-3 shadow-lg"
           >
             <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-6 h-6 bg-white rounded-full p-1" alt="Google" />
-            ENTRAR COM GOOGLE
+            <span>ENTRAR COM GOOGLE</span>
           </button>
         </motion.div>
       </div>
@@ -409,11 +437,11 @@ export const AdminPanel: React.FC = () => {
       <div className="max-w-[600px] mx-auto">
         <header className="flex justify-between items-center mb-8 bg-[#1f2937] p-4 rounded-2xl border border-gray-700">
           <div>
-            <h1 className="text-[#facc15] font-bold text-xl uppercase">Admin Panel</h1>
-            <p className="text-xs text-gray-400">{user.email}</p>
+            <h1 className="text-[#facc15] font-bold text-xl uppercase"><span>Admin Panel</span></h1>
+            <p className="text-xs text-gray-400"><span>{user.email}</span></p>
           </div>
           <button onClick={logout} className="text-red-500 hover:bg-red-500/10 p-2 rounded-lg transition-colors flex items-center gap-2 font-semibold">
-            <LogOut size={20} /> SAIR
+            <LogOut size={20} /> <span>SAIR</span>
           </button>
         </header>
 
@@ -423,13 +451,13 @@ export const AdminPanel: React.FC = () => {
             onClick={() => { setView('apps'); setEditingStoreId(null); }}
             className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-lg font-bold transition-all ${view === 'apps' ? 'bg-[#facc15] text-black' : 'text-gray-400 hover:text-white'}`}
           >
-            <LayoutGrid size={20} /> APPS GLOBAIS
+            <LayoutGrid size={20} /> <span>APPS GLOBAIS</span>
           </button>
           <button 
             onClick={() => setView('stores')}
             className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-lg font-bold transition-all ${view === 'stores' ? 'bg-[#facc15] text-black' : 'text-gray-400 hover:text-white'}`}
           >
-            <Store size={20} /> SUB-LOJAS
+            <Store size={20} /> <span>SUB-LOJAS</span>
           </button>
         </div>
 
@@ -438,17 +466,17 @@ export const AdminPanel: React.FC = () => {
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3 text-[#facc15]">
               <Github size={24} />
-              <h2 className="text-xl font-bold uppercase">Configuração GitHub</h2>
+              <h2 className="text-xl font-bold uppercase"><span>Configuração GitHub</span></h2>
             </div>
             {process.env.GITHUB_PAT ? (
-              <span className="text-[10px] bg-green-500/20 text-green-400 px-2 py-1 rounded-full border border-green-500/30 font-bold">TOKEN OK</span>
+              <span className="text-[10px] bg-green-500/20 text-green-400 px-2 py-1 rounded-full border border-green-500/30 font-bold"><span>TOKEN OK</span></span>
             ) : (
-              <span className="text-[10px] bg-red-500/20 text-red-400 px-2 py-1 rounded-full border border-red-500/30 font-bold">TOKEN AUSENTE</span>
+              <span className="text-[10px] bg-red-500/20 text-red-400 px-2 py-1 rounded-full border border-red-500/30 font-bold"><span>TOKEN AUSENTE</span></span>
             )}
           </div>
           <div className="space-y-4">
             <div className="space-y-1">
-              <label className="text-xs font-bold text-gray-500 uppercase">Repositório (usuario/repo)</label>
+              <label className="text-xs font-bold text-gray-500 uppercase"><span>Repositório (usuario/repo)</span></label>
               <input
                 type="text"
                 value={githubRepo}
@@ -458,9 +486,9 @@ export const AdminPanel: React.FC = () => {
               />
             </div>
             <p className="text-[10px] text-gray-400 italic">
-              * O Token (PAT) deve ser configurado nos Secrets do AI Studio como <strong>GITHUB_PAT</strong>.
+              <span>* O Token (PAT) deve ser configurado nos Secrets do AI Studio como </span><strong>GITHUB_PAT</strong>.
               {!process.env.GITHUB_PAT && (
-                <span className="block mt-1 text-red-400 font-bold">Atenção: GITHUB_PAT não encontrado! Adicione-o nos Secrets para habilitar o upload.</span>
+                <span className="block mt-1 text-red-400 font-bold"><span>Atenção: GITHUB_PAT não encontrado! Adicione-o nos Secrets para habilitar o upload.</span></span>
               )}
             </p>
           </div>
@@ -470,11 +498,11 @@ export const AdminPanel: React.FC = () => {
           <div className="space-y-10">
             <section>
               <h2 className="text-[#facc15] text-2xl font-bold mb-4 flex items-center gap-2">
-                <Plus size={24} /> NOVO APP GLOBAL
+                <Plus size={24} /> <span>NOVO APP GLOBAL</span>
               </h2>
               <div className="bg-[#1f2937] rounded-2xl p-6 border border-gray-700 shadow-xl space-y-4">
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-gray-500 uppercase">Nome do App</label>
+                  <label className="text-xs font-bold text-gray-500 uppercase"><span>Nome do App</span></label>
                   <input
                     type="text"
                     value={newApp.nome}
@@ -486,7 +514,7 @@ export const AdminPanel: React.FC = () => {
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-gray-500 uppercase flex items-center justify-between">
                     <span>Link para Download</span>
-                    <span className="text-[10px] text-gray-400">Ou use o botão abaixo</span>
+                    <span className="text-[10px] text-gray-400"><span>Ou use o botão abaixo</span></span>
                   </label>
                   <input
                     type="text"
@@ -503,17 +531,17 @@ export const AdminPanel: React.FC = () => {
                     >
                       {isUploadingNewAppGithub ? (
                         <div className="flex items-center gap-2 animate-pulse text-[#facc15]">
-                          <Github className="animate-spin" size={18} /> SUBINDO APK...
+                          <Github className="animate-spin" size={18} /> <span>SUBINDO APK...</span>
                         </div>
                       ) : (
-                        <><Github size={18} /> SUBIR APK PARA GITHUB RELEASES</>
+                        <><Github size={18} /> <span>SUBIR APK PARA GITHUB RELEASES</span></>
                       )}
                     </button>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-gray-500 uppercase">PIN</label>
+                    <label className="text-xs font-bold text-gray-500 uppercase"><span>PIN</span></label>
                     <input
                       type="text"
                       value={newApp.pin}
@@ -523,7 +551,7 @@ export const AdminPanel: React.FC = () => {
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-gray-500 uppercase">Tamanho</label>
+                    <label className="text-xs font-bold text-gray-500 uppercase"><span>Tamanho</span></label>
                     <input
                       type="text"
                       value={newApp.tamanho}
@@ -536,7 +564,7 @@ export const AdminPanel: React.FC = () => {
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-gray-500 uppercase flex items-center justify-between">
                     <span>URL do Ícone</span>
-                    <span className="text-[10px] text-gray-400">Ou use o botão abaixo</span>
+                    <span className="text-[10px] text-gray-400"><span>Ou use o botão abaixo</span></span>
                   </label>
                   <input
                     type="text"
@@ -547,7 +575,7 @@ export const AdminPanel: React.FC = () => {
                   />
                   <div className="mt-2">
                     <label className="flex items-center justify-center gap-2 bg-[#374151] hover:bg-[#4b5563] border border-dashed border-gray-500 rounded-xl p-3 cursor-pointer transition-all text-sm font-bold">
-                      <Upload size={18} /> {newApp.iconUrl.startsWith('data:') ? 'IMAGEM CARREGADA' : 'SUBIR IMAGEM'}
+                      <Upload size={18} /> <span>{newApp.iconUrl.startsWith('data:') ? 'IMAGEM CARREGADA' : 'SUBIR IMAGEM'}</span>
                       <input 
                         id="app-icon-upload"
                         type="file" 
@@ -558,18 +586,18 @@ export const AdminPanel: React.FC = () => {
                     </label>
                   </div>
                 </div>
-                <button
-                  onClick={handleAddApp}
-                  className="w-full bg-[#22c55e] hover:bg-[#16a34a] text-white py-4 rounded-xl font-bold text-lg transition-all mt-4 flex items-center justify-center gap-2 shadow-lg"
-                >
-                  <Plus size={24} /> CRIAR APLICATIVO
-                </button>
+                  <button
+                    onClick={handleAddApp}
+                    className="w-full bg-[#22c55e] hover:bg-[#16a34a] text-white py-4 rounded-xl font-bold text-lg transition-all mt-4 flex items-center justify-center gap-2 shadow-lg"
+                  >
+                    <Plus size={24} /> <span>CRIAR APLICATIVO</span>
+                  </button>
               </div>
             </section>
 
             <section>
               <h2 className="text-[#facc15] text-2xl font-bold mb-4 flex items-center gap-2">
-                <Save size={24} /> LISTA GLOBAL
+                <Save size={24} /> <span>LISTA GLOBAL</span>
               </h2>
               <div className="space-y-4">
                 <AnimatePresence>
@@ -582,7 +610,7 @@ export const AdminPanel: React.FC = () => {
                       className="bg-[#1f2937] rounded-2xl p-5 border-l-8 border-[#facc15] shadow-lg flex flex-col gap-4"
                     >
                       <div className="flex justify-between items-start">
-                        <h3 className="font-bold text-lg text-white uppercase">{app.nome}</h3>
+                        <h3 className="font-bold text-lg text-white uppercase"><span>{app.nome}</span></h3>
                         <div className="flex gap-2">
                           <button 
                             onClick={() => handleGithubUpload(app)}
@@ -601,7 +629,7 @@ export const AdminPanel: React.FC = () => {
                         </div>
                       </div>
                       <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-gray-500 uppercase">Link de Download</label>
+                        <label className="text-[10px] font-bold text-gray-500 uppercase"><span>Link de Download</span></label>
                         <div className="flex gap-2">
                           <input
                             type="text"
@@ -632,11 +660,11 @@ export const AdminPanel: React.FC = () => {
               <>
                 <section>
                   <h2 className="text-[#facc15] text-2xl font-bold mb-4 flex items-center gap-2">
-                    <Plus size={24} /> NOVA SUB-LOJA
+                    <Plus size={24} /> <span>NOVA SUB-LOJA</span>
                   </h2>
                   <div className="bg-[#1f2937] rounded-2xl p-6 border border-gray-700 shadow-xl space-y-4">
                     <div className="space-y-1">
-                      <label className="text-xs font-bold text-gray-500 uppercase">Nome da Loja</label>
+                      <label className="text-xs font-bold text-gray-500 uppercase"><span>Nome da Loja</span></label>
                       <input
                         type="text"
                         value={newStore.nome}
@@ -646,7 +674,7 @@ export const AdminPanel: React.FC = () => {
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-xs font-bold text-gray-500 uppercase">Slug (URL)</label>
+                      <label className="text-xs font-bold text-gray-500 uppercase"><span>Slug (URL)</span></label>
                       <input
                         type="text"
                         value={newStore.slug}
@@ -658,7 +686,7 @@ export const AdminPanel: React.FC = () => {
                     <div className="space-y-1">
                       <label className="text-xs font-bold text-gray-500 uppercase flex items-center justify-between">
                         <span>URL do Logo</span>
-                        <span className="text-[10px] text-gray-400">Ou use o botão abaixo</span>
+                        <span className="text-[10px] text-gray-400"><span>Ou use o botão abaixo</span></span>
                       </label>
                       <input
                         type="text"
@@ -669,7 +697,7 @@ export const AdminPanel: React.FC = () => {
                       />
                       <div className="mt-2">
                         <label className="flex items-center justify-center gap-2 bg-[#374151] hover:bg-[#4b5563] border border-dashed border-gray-500 rounded-xl p-3 cursor-pointer transition-all text-sm font-bold">
-                          <Upload size={18} /> {newStore.logoUrl.startsWith('data:') ? 'LOGO CARREGADO' : 'SUBIR LOGO'}
+                          <Upload size={18} /> <span>{newStore.logoUrl.startsWith('data:') ? 'LOGO CARREGADO' : 'SUBIR LOGO'}</span>
                           <input 
                             id="store-logo-upload"
                             type="file" 
@@ -684,14 +712,14 @@ export const AdminPanel: React.FC = () => {
                       onClick={handleAddStore}
                       className="w-full bg-[#22c55e] hover:bg-[#16a34a] text-white py-4 rounded-xl font-bold text-lg transition-all mt-4 flex items-center justify-center gap-2 shadow-lg"
                     >
-                      <Plus size={24} /> CRIAR SUB-LOJA
+                      <Plus size={24} /> <span>CRIAR SUB-LOJA</span>
                     </button>
                   </div>
                 </section>
 
                 <section>
                   <h2 className="text-[#facc15] text-2xl font-bold mb-4 flex items-center gap-2">
-                    <Store size={24} /> LOJAS EXISTENTES
+                    <Store size={24} /> <span>LOJAS EXISTENTES</span>
                   </h2>
                   <div className="space-y-4">
                     {stores.map(store => (
@@ -703,8 +731,8 @@ export const AdminPanel: React.FC = () => {
                             <div className="w-12 h-12 rounded-lg bg-gray-700 flex items-center justify-center"><Store size={20} /></div>
                           )}
                           <div>
-                            <h3 className="font-bold text-white uppercase">{store.nome}</h3>
-                            <p className="text-xs text-gray-500">Slug: {store.slug}</p>
+                            <h3 className="font-bold text-white uppercase"><span>{store.nome}</span></h3>
+                            <p className="text-xs text-gray-500"><span>Slug: {store.slug}</span></p>
                           </div>
                         </div>
                         <div className="flex gap-2">
@@ -742,15 +770,15 @@ export const AdminPanel: React.FC = () => {
                     onClick={() => setEditingStoreId(null)}
                     className="text-gray-400 hover:text-white flex items-center gap-2 font-bold"
                   >
-                    ← VOLTAR
+                    <span>← VOLTAR</span>
                   </button>
                   <h2 className="text-[#facc15] text-xl font-bold uppercase">
-                    Configurar: {stores.find(s => s.id === editingStoreId)?.nome}
+                    <span>Configurar: </span><span>{stores.find(s => s.id === editingStoreId)?.nome}</span>
                   </h2>
                 </div>
                 
                 <p className="text-sm text-gray-400 mb-6 bg-white/5 p-4 rounded-xl border border-gray-700">
-                  Selecione quais aplicativos devem aparecer nesta sub-loja. Por padrão, todos aparecem.
+                  <span>Selecione quais aplicativos devem aparecer nesta sub-loja. Por padrão, todos aparecem.</span>
                 </p>
 
                 <div className="space-y-3">
@@ -784,6 +812,85 @@ export const AdminPanel: React.FC = () => {
           </div>
         )}
       </div>
+
+      <AnimatePresence>
+        {confirmModal && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[10000] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-[#1f2937] border border-gray-700 p-6 rounded-2xl max-w-sm w-full shadow-2xl"
+            >
+              <h3 className="text-xl font-bold mb-4"><span>Confirmação</span></h3>
+              <p className="text-gray-400 mb-6"><span>{confirmModal.message}</span></p>
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => setConfirmModal(null)}
+                  className="flex-1 py-3 rounded-xl bg-gray-700 hover:bg-gray-600 font-bold transition-all"
+                >
+                  <span>CANCELAR</span>
+                </button>
+                <button 
+                  onClick={confirmModal.onConfirm}
+                  className="flex-1 py-3 rounded-xl bg-red-600 hover:bg-red-700 font-bold transition-all"
+                >
+                  <span>EXCLUIR</span>
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {versionModal && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[10000] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-[#1f2937] border border-gray-700 p-6 rounded-2xl max-w-sm w-full shadow-2xl"
+            >
+              <h3 className="text-xl font-bold mb-4"><span>Versão do App</span></h3>
+              <p className="text-gray-400 mb-4 text-sm"><span>Defina a tag de versão para o GitHub (ex: v1.0.0)</span></p>
+              <input 
+                type="text"
+                value={tempVersion}
+                onChange={(e) => setTempVersion(e.target.value)}
+                className="w-full bg-[#374151] border border-gray-600 rounded-xl p-3 focus:ring-2 focus:ring-[#facc15] outline-none transition-all mb-6"
+                placeholder="v1.0.0"
+              />
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => setVersionModal(null)}
+                  className="flex-1 py-3 rounded-xl bg-gray-700 hover:bg-gray-600 font-bold transition-all"
+                >
+                  <span>CANCELAR</span>
+                </button>
+                <button 
+                  onClick={() => versionModal.onConfirm(tempVersion)}
+                  className="flex-1 py-3 rounded-xl bg-[#facc15] text-black hover:bg-[#eab308] font-bold transition-all"
+                >
+                  <span>CONFIRMAR</span>
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {toast && (
+          <motion.div
+            initial={{ y: 100, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 100, opacity: 0 }}
+            className={`fixed bottom-6 left-1/2 -translate-x-1/2 px-6 py-3 rounded-xl font-bold shadow-2xl z-[9999] flex items-center gap-2 border ${
+              toast.type === 'success' ? 'bg-green-600 border-green-500 text-white' : 'bg-red-600 border-red-500 text-white'
+            }`}
+          >
+            {toast.type === 'success' ? <Check size={20} /> : <ShieldAlert size={20} />}
+            <span>{toast.message}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

@@ -12,66 +12,88 @@ export const PublicStore: React.FC = () => {
   const [showToast, setShowToast] = useState(false);
 
   useEffect(() => {
-    const fetchStoreAndApps = async () => {
-      try {
-        // Get slug from URL query param ?s=slug or default
-        const params = new URLSearchParams(window.location.search);
-        const slug = params.get('s');
+    let unsubscribeApps: (() => void) | null = null;
+    let unsubscribeStore: (() => void) | null = null;
 
-        let storeData: StoreData | null = null;
-
-        if (slug) {
-          const qStore = query(collection(db, 'stores'), where('slug', '==', slug), limit(1));
-          const storeSnap = await getDocs(qStore);
-          if (!storeSnap.empty) {
-            storeData = { id: storeSnap.docs[0].id, excludedAppIds: [], ...storeSnap.docs[0].data() } as StoreData;
-          }
-        }
-
-        // If no slug or store not found, try to get the first store as default
-        if (!storeData) {
-          const qDefault = query(collection(db, 'stores'), orderBy('createdAt', 'asc'), limit(1));
-          const defaultSnap = await getDocs(qDefault);
-          if (!defaultSnap.empty) {
-            storeData = { id: defaultSnap.docs[0].id, excludedAppIds: [], ...defaultSnap.docs[0].data() } as StoreData;
-          }
-        }
-
-        setStore(storeData);
-
-        if (storeData) {
-          // Listen to ALL apps (Global)
-          const qApps = query(collection(db, 'apps'), orderBy('createdAt', 'desc'));
+    // Helper to handle store data and setup apps listener
+    const handleStoreData = (data: StoreData | null) => {
+      setStore(data);
+      
+      // If we have a store, listen to apps
+      if (data) {
+        if (unsubscribeApps) unsubscribeApps();
+        
+        const qApps = query(collection(db, 'apps'), orderBy('createdAt', 'desc'));
+        unsubscribeApps = onSnapshot(qApps, (snapshot) => {
+          const appsData = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          })) as AppData[];
           
-          const unsubscribe = onSnapshot(qApps, (snapshot) => {
-            const appsData = snapshot.docs.map(doc => ({
-              id: doc.id,
-              ...doc.data()
-            })) as AppData[];
-            
-            // Filter out apps excluded by this specific store
-            const excludedIds = storeData?.excludedAppIds || [];
-            const filteredApps = appsData.filter(app => !excludedIds.includes(app.id));
-            
-            setApps(filteredApps);
-            setLoading(false);
-          }, (error) => {
-            handleFirestoreError(error, OperationType.LIST, 'apps');
-          });
-
-          return unsubscribe;
-        } else {
+          const excludedIds = data.excludedAppIds || [];
+          const filteredApps = appsData.filter(app => !excludedIds.includes(app.id));
+          
+          setApps(filteredApps);
           setLoading(false);
-        }
-      } catch (error) {
-        console.error("Error fetching store:", error);
+        }, (error) => {
+          handleFirestoreError(error, OperationType.LIST, 'apps');
+          setLoading(false);
+        });
+      } else {
+        setApps([]);
         setLoading(false);
       }
     };
 
-    const unsubscribePromise = fetchStoreAndApps();
+    const fetchDefaultStore = () => {
+      if (unsubscribeStore) unsubscribeStore();
+      const qDefault = query(collection(db, 'stores'), orderBy('createdAt', 'asc'), limit(1));
+      unsubscribeStore = onSnapshot(qDefault, (snapshot) => {
+        if (!snapshot.empty) {
+          const data = { id: snapshot.docs[0].id, excludedAppIds: [], ...snapshot.docs[0].data() } as StoreData;
+          handleStoreData(data);
+        } else {
+          handleStoreData(null);
+        }
+      }, (error) => {
+        handleFirestoreError(error, OperationType.GET, 'stores');
+        setLoading(false);
+      });
+    };
+
+    const initStoreListener = async () => {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const slug = params.get('s');
+
+        if (slug) {
+          const qStore = query(collection(db, 'stores'), where('slug', '==', slug), limit(1));
+          unsubscribeStore = onSnapshot(qStore, (snapshot) => {
+            if (!snapshot.empty) {
+              const data = { id: snapshot.docs[0].id, excludedAppIds: [], ...snapshot.docs[0].data() } as StoreData;
+              handleStoreData(data);
+            } else {
+              // Fallback to default if slug not found
+              fetchDefaultStore();
+            }
+          }, (error) => {
+            handleFirestoreError(error, OperationType.GET, 'stores');
+            fetchDefaultStore();
+          });
+        } else {
+          fetchDefaultStore();
+        }
+      } catch (error) {
+        console.error("Error in initStoreListener:", error);
+        setLoading(false);
+      }
+    };
+
+    initStoreListener();
+
     return () => {
-      unsubscribePromise.then(unsubscribe => unsubscribe && unsubscribe());
+      if (unsubscribeApps) unsubscribeApps();
+      if (unsubscribeStore) unsubscribeStore();
     };
   }, []);
 
@@ -86,7 +108,7 @@ export const PublicStore: React.FC = () => {
   if (loading) {
     return (
       <div className="min-h-screen bg-[#0d1117] flex items-center justify-center">
-        <div className="text-center py-20 text-xl animate-pulse text-white">Buscando aplicativos...</div>
+        <div className="text-center py-20 text-xl animate-pulse text-white"><span>Buscando aplicativos...</span></div>
       </div>
     );
   }
@@ -94,7 +116,7 @@ export const PublicStore: React.FC = () => {
   return (
     <div className="min-h-screen bg-[#0d1117] text-white flex flex-col items-center pb-20">
       <header className="w-full bg-[#1e40af] text-center py-8 border-b-4 border-[#facc15] shadow-lg flex flex-col items-center">
-        <h1 className="text-4xl font-bold tracking-wider uppercase">Loja de Apps</h1>
+        <h1 className="text-4xl font-bold tracking-wider uppercase"><span>Loja de Apps</span></h1>
         
         {/* Espaço para Logo */}
         <div className="mt-6 w-32 h-32 bg-white/5 rounded-3xl border-2 border-dashed border-[#facc15]/30 flex items-center justify-center overflow-hidden shadow-inner">
@@ -115,11 +137,11 @@ export const PublicStore: React.FC = () => {
         {!store ? (
           <div className="text-center py-20 text-gray-400 bg-[#1f2937] rounded-3xl border border-gray-700 p-8">
             <StoreIcon size={64} className="mx-auto mb-4 opacity-20" />
-            <h2 className="text-xl font-bold text-white mb-2">Nenhuma loja configurada</h2>
-            <p>Acesse o painel administrativo para criar sua primeira loja.</p>
+            <h2 className="text-xl font-bold text-white mb-2"><span>Nenhuma loja configurada</span></h2>
+            <p><span>Acesse o painel administrativo para criar sua primeira loja.</span></p>
           </div>
         ) : apps.length === 0 ? (
-          <div className="text-center py-20 text-gray-400">Nenhum aplicativo cadastrado nesta loja.</div>
+          <div className="text-center py-20 text-gray-400"><span>Nenhum aplicativo cadastrado nesta loja.</span></div>
         ) : (
           <div className="space-y-6">
             <AnimatePresence>
@@ -148,30 +170,30 @@ export const PublicStore: React.FC = () => {
                   </div>
 
                   <h2 className="text-2xl font-bold text-[#facc15] mb-4 uppercase tracking-tight">
-                    {app.nome}
+                    <span>{app.nome}</span>
                   </h2>
 
                   <div className="space-y-2 mb-6">
                     <div className="flex justify-between items-center py-2 border-b border-[#374151] text-gray-300">
                       <span className="flex items-center gap-2 text-sm uppercase font-semibold text-gray-400">
-                        <Info size={16} /> Tamanho
+                        <Info size={16} /> <span>Tamanho</span>
                       </span>
-                      <strong className="text-white">{app.tamanho || '--'}</strong>
+                      <strong className="text-white"><span>{app.tamanho || '--'}</span></strong>
                     </div>
                     <div className="flex justify-between items-center py-2 border-b border-[#374151] text-gray-300">
                       <span className="flex items-center gap-2 text-sm uppercase font-semibold text-gray-400">
-                        <Key size={16} /> PIN
+                        <Key size={16} /> <span>PIN</span>
                       </span>
-                      <strong className="text-white">{app.pin || '--'}</strong>
+                      <strong className="text-white"><span>{app.pin || '--'}</span></strong>
                     </div>
                   </div>
 
-                  <button
+          <button
                     onClick={() => handleDownload(app.downloadUrl)}
                     className="w-full bg-[#2563eb] hover:bg-[#1d4ed8] active:scale-95 text-white py-4 rounded-xl font-bold text-xl transition-all flex items-center justify-center gap-3 shadow-lg focus:outline-none focus:ring-4 focus:ring-[#facc15]"
                   >
                     <Download size={24} />
-                    BAIXAR AGORA
+                    <span>BAIXAR AGORA</span>
                   </button>
                 </motion.section>
               ))}
@@ -187,7 +209,7 @@ export const PublicStore: React.FC = () => {
           exit={{ y: 100 }}
           className="fixed bottom-0 left-0 w-full bg-[#16a34a] text-white text-center py-5 font-bold text-lg z-[9999] shadow-2xl"
         >
-          AGUARDE... PREPARANDO DOWNLOAD
+          <span>AGUARDE... PREPARANDO DOWNLOAD</span>
         </motion.div>
       )}
     </div>
