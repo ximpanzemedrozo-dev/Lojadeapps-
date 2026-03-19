@@ -1,10 +1,11 @@
 {
-  "projectId": "gerenciador-inteligente-27636",
-  "appId": "1:377729052526:web:9205963b74608da3525b7f",
-  "apiKey": "AIzaSyCb2K_i-y1ln_CBqoKlMDinY7EzbLqPIFA",
-  "authDomain": "gerenciador-inteligente-27636.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-c9044a52-7145-4e41-900b-19d43f92ead5",
-  "storageBucket": "gerenciador-inteligente-27636.firebasestorage.app",
-  "messagingSenderId": "377729052526",
-  "measurementId": ""
+  "projectId": "saites-de-downloads",
+  "appId": "1:643277546193:web:e656d6607d7b0a3b1c1bf0",
+  "apiKey": "AIzaSyDPlcuFagOTKpyTavTueszzVn0TNrRr1dQ",
+  "authDomain": "saites-de-downloads.firebaseapp.com",
+  "databaseURL": "https://saites-de-downloads-default-rtdb.firebaseio.com",
+  "firestoreDatabaseId": "(default)",
+  "storageBucket": "saites-de-downloads.firebasestorage.app",
+  "messagingSenderId": "643277546193",
+  "measurementId": "G-S2JT6QG9XR"
 }

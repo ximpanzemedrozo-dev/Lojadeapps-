@@ -25,6 +25,11 @@ export const AdminPanel: React.FC = () => {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [githubRepo, setGithubRepo] = useState(localStorage.getItem('github_repo') || '');
   const [isUploadingGithub, setIsUploadingGithub] = useState<string | null>(null);
+  const [isIframe, setIsIframe] = useState(false);
+
+  useEffect(() => {
+    setIsIframe(window.self !== window.top);
+  }, []);
 
   useEffect(() => {
     localStorage.setItem('github_repo', githubRepo);
@@ -293,9 +298,33 @@ export const AdminPanel: React.FC = () => {
         >
           <ShieldAlert size={64} className="text-[#facc15] mx-auto mb-6" />
           <h1 className="text-3xl font-bold text-[#facc15] mb-2 uppercase tracking-tight">PAINEL PRIVADO</h1>
-          <p className="text-gray-400 mb-8">Acesso restrito aos administradores da LOJAAPPSMU.</p>
+          <p className="text-gray-400 mb-8">Acesso restrito aos administradores da Loja de Apps.</p>
+          
+          <div className="mb-6 p-4 bg-blue-900/30 border border-blue-700/50 rounded-xl text-sm text-blue-200 text-left">
+            <strong>Dica:</strong> Se o botão de login não abrir nada, clique no botão abaixo para abrir em uma nova aba. O navegador costuma bloquear logins dentro desta janela de visualização.
+            <br /><br />
+            <strong>Atenção:</strong> Certifique-se de que o domínio <code>run.app</code> está adicionado nos <strong>"Domínios Autorizados"</strong> no Console do Firebase (Autenticação {'>'} Configurações).
+          </div>
+
+          {isIframe && (
+            <button
+              onClick={() => window.open(window.location.href, '_blank')}
+              className="w-full mb-4 bg-gray-700 hover:bg-gray-600 text-white py-3 rounded-xl font-semibold flex items-center justify-center gap-2 transition-all"
+            >
+              <ExternalLink size={18} />
+              ABRIR EM NOVA ABA
+            </button>
+          )}
+
           <button
-            onClick={loginWithGoogle}
+            onClick={async () => {
+              try {
+                await loginWithGoogle();
+              } catch (error: any) {
+                console.error("Erro no login:", error);
+                alert("Erro ao fazer login: " + (error.message || "Verifique se os popups estão bloqueados."));
+              }
+            }}
             className="w-full bg-[#db4437] hover:bg-[#c53929] text-white py-4 rounded-xl font-bold text-lg transition-all flex items-center justify-center gap-3 shadow-lg"
           >
             <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-6 h-6 bg-white rounded-full p-1" alt="Google" />
